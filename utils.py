@@ -9,18 +9,50 @@ import torchvision.models as models
 import timm
 from timm.models import create_model
 from torch.utils.data import DataLoader
+import torch.nn as nn
 from torchvision import transforms
 from torchvision.transforms import transforms
 from tqdm import tqdm
 
 import vit_models
 
+class ClipEnc(nn.Module):
+    def __init__(self, m):
+        super().__init__()
+        self.m = m
+    def forward(self, im):
+        e = self.m.encode_image(im)
+        return e
+    def forward_selfattention(self, x):
+        x = self.m.visual.conv1(x)  # shape = [*, width, grid, grid]
+        x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
+        x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
+        x = torch.cat([self.m.visual.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), x], dim=1)  # shape = [*, grid ** 2 + 1, width]
+        x = x + self.m.visual.positional_embedding.to(x.dtype)
+        x = self.m.visual.ln_pre(x)
+
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        for i, blk in enumerate(self.m.visual.transformer.resblocks):
+            if i == self.m.visual.transformer.layers - 1:
+                x = blk.ln_1(x)
+                blk.attn_mask = blk.attn_mask.to(dtype=x.dtype, device=x.device) if blk.attn_mask is not None else None
+                x = blk.attn(x, x, x, need_weights=True, attn_mask=blk.attn_mask, average_attn_weights=False)[1]
+                # return x[:, 0, 1:]
+                return x
+                # blk.attn_mask = blk.attn_mask.to(dtype=x.dtype, device=x.device) if blk.attn_mask is not None else None
+                # return blk.attn(x, x, x, need_weights=False, attn_mask=blk.attn_mask)[0] # change to 1? why?
+                # import pdb; pdb.set_trace()
+                # return blk.attention(blk.ln_1(x))[0]
+
+            x = blk(x)
+    
+
 
 def get_voc_dataset(voc_root=None):
     if voc_root is None:
         voc_root = "data/voc"  # path to VOCdevkit for VOC2012
     data_transform = transforms.Compose([
-        transforms.Resize((512, 512)),
+        transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
@@ -31,12 +63,12 @@ def get_voc_dataset(voc_root=None):
         return image
 
     target_transform = transforms.Compose([
-        transforms.Resize((512, 512)),
+        transforms.Resize((224, 224)),
         transforms.Lambda(load_target),
     ])
 
     dataset = torchvision.datasets.VOCSegmentation(root=voc_root, image_set="val", transform=data_transform,
-                                                   target_transform=target_transform)
+                                                   target_transform=target_transform, download=True)
     data_loader = torch.utils.data.DataLoader(dataset, batch_size=1, drop_last=False)
 
     return dataset, data_loader
@@ -72,14 +104,24 @@ def get_model(args, pretrained=True):
         model = vit_models.dino_small(patch_size=vars(args).get("patch_size", 16), pretrained=pretrained)
         mean = (0.485, 0.456, 0.406)
         std = (0.229, 0.224, 0.225)
+    elif 'dino_small_v2' in args.model_name:
+        model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
     elif 'dino_tiny' in args.model_name:
         model = vit_models.dino_tiny(patch_size=vars(args).get("patch_size", 16), pretrained=pretrained)
         mean = (0.485, 0.456, 0.406)
         std = (0.229, 0.224, 0.225)
-    elif 'vit' in args.model_name and not 'T2t' in args.model_name:
-        model = create_model(args.model_name, pretrained=pretrained)
-        mean = (0.5, 0.5, 0.5)
-        std = (0.5, 0.5, 0.5)
+    elif 'clip_vitb16' in args.model_name:
+        import clip
+        model, _ = clip.load('ViT-B/32', device='cpu', jit=False)
+        model = ClipEnc(model)
+        mean = (0.48145466, 0.4578275, 0.40821073)
+        std = (0.26862954, 0.26130258, 0.27577711)
+    # elif 'vit' in args.model_name and not 'T2t' in args.model_name:
+    #     model = create_model(args.model_name, pretrained=pretrained)
+    #     mean = (0.5, 0.5, 0.5)
+    #     std = (0.5, 0.5, 0.5)
     elif 'T2t' in args.model_name:
         model = create_model(args.model_name, pretrained=pretrained)
         mean = (0.485, 0.456, 0.406)
@@ -88,6 +130,57 @@ def get_model(args, pretrained=True):
         model = create_model(args.model_name, pretrained=pretrained)
         mean = (0.5, 0.5, 0.5)
         std = (0.5, 0.5, 0.5)
+    elif 'mvp' == args.model_name:
+        import mvp
+        model = mvp.load("vitb-mae-egosoup")
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
+    elif 'mvp_mae_hoi' == args.model_name:
+        import mvp
+        model = mvp.load("vits-mae-hoi")
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
+    elif 'mocov3_vitb' == args.model_name:
+        from torch.utils import model_zoo
+        import torch.nn as nn
+        import vits
+        model = vits.vit_base()
+        checkpoint = model_zoo.load_url("https://dl.fbaipublicfiles.com/moco-v3/vit-b-300ep/vit-b-300ep.pth.tar")
+        state_dict = checkpoint["state_dict"]
+        for k in list(state_dict.keys()):
+            if k.startswith('module.base_encoder') and not k.startswith('module.base_encoder.head'):
+                # remove prefix
+                state_dict[k[len("module.base_encoder."):]] = state_dict[k]
+            # delete renamed or unused k
+            del state_dict[k]
+        model.load_state_dict(state_dict, strict=False)
+        model.head = nn.Identity()
+        model = model.eval()
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
+    elif 'mocov3' in args.model_name:
+        from torch.utils import model_zoo
+        import torch.nn as nn
+        import vits
+        model = vits.vit_small()
+        checkpoint = model_zoo.load_url("https://dl.fbaipublicfiles.com/moco-v3/vit-s-300ep/vit-s-300ep.pth.tar")
+        state_dict = checkpoint["state_dict"]
+        for k in list(state_dict.keys()):
+            if k.startswith('module.base_encoder') and not k.startswith('module.base_encoder.head'):
+                # remove prefix
+                state_dict[k[len("module.base_encoder."):]] = state_dict[k]
+            # delete renamed or unused k
+            del state_dict[k]
+        model.load_state_dict(state_dict, strict=False)
+        model.head = nn.Identity()
+        model = model.eval()
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
+    elif args.model_name == 'vit_mae_in':
+        import mvp
+        model = mvp.load("vits-mae-in")
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
     elif args.model_name in timm_model_names:
         model = create_model(args.model_name, pretrained=pretrained)
         mean = (0.485, 0.456, 0.406)

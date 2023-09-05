@@ -21,11 +21,15 @@ def get_attention_masks(args, image, model, device):
     w_featmap = image.shape[-2] // args.patch_size
     h_featmap = image.shape[-1] // args.patch_size
 
-    attentions = model.forward_selfattention(image.to(device))
+    # import pdb; pdb.set_trace()
+    try:
+        attentions = model.forward_selfattention(image.to(device))
+    except:
+        attentions = model.forward_attention(image.to(device), layer=11)
     nh = attentions.shape[1]
 
     # we keep only the output patch attention
-    if args.is_dist:
+    if False:
         if args.use_shape:
             attentions = attentions[0, :, 1, 2:].reshape(nh, -1)  # use distillation token attention
         else:
@@ -41,6 +45,11 @@ def get_attention_masks(args, image, model, device):
     idx2 = torch.argsort(idx)
     for head in range(nh):
         th_attn[head] = th_attn[head][idx2[head]]
+
+    # upsample back to input resolution for clip attn
+    # th_attn = th_attn.reshape(nh, 7, 7).float()
+    # th_attn = interpolate(th_attn.unsqueeze(0), scale_factor=2, mode="nearest")[0]
+
     th_attn = th_attn.reshape(nh, w_featmap, h_featmap).float()
     # interpolate
     th_attn = interpolate(th_attn.unsqueeze(0), scale_factor=args.patch_size, mode="nearest")[0]
@@ -70,6 +79,7 @@ def run_eval(args, data_loader, model, device):
     model.eval()
     total_jac = 0
     image_count = 0
+    import pdb; pdb.set_trace()
     for idx, (sample, target) in tqdm(enumerate(data_loader), total=len(data_loader)):
         sample, target = sample.to(device), target.to(device)
         attention_mask = get_attention_masks(args, sample, model, device)
@@ -171,27 +181,33 @@ def generate_images_per_model(args, model, device):
 
 
 if __name__ == '__main__':
-    opt = parse_args()
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    test_dataset, test_data_loader = get_voc_dataset()
+    # opt = parse_args()
+    # device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    # test_dataset, test_data_loader = get_voc_dataset()
 
-    opt.is_dist = "dist" in opt.model_name
-    if opt.use_shape:
-        assert opt.is_dist, "shape token only present in distilled models"
+    # opt.is_dist = "dist" in opt.model_name
+    # if opt.use_shape:
+    #     assert opt.is_dist, "shape token only present in distilled models"
 
-    if opt.rand_init:
-        dino_model, mean, std = get_model(opt, pretrained=False)
-    else:
-        dino_model, mean, std = get_model(opt)
-        if opt.pretrained_weights.startswith("https://"):
-            state_dict = torch.hub.load_state_dict_from_url(url=opt.pretrained_weights, map_location="cpu")
-        else:
-            state_dict = torch.load(opt.pretrained_weights, map_location="cpu")
-        msg = dino_model.load_state_dict(state_dict["model"], strict=False)
-        print(msg)
+    # if opt.rand_init:
+    #     dino_model, mean, std = get_model(opt, pretrained=False)
+    # else:
+    #     dino_model, mean, std = get_model(opt)
+    #     if opt.pretrained_weights.startswith("https://"):
+    #         state_dict = torch.hub.load_state_dict_from_url(url=opt.pretrained_weights, map_location="cpu")
+    #     else:
+    #         state_dict = torch.load(opt.pretrained_weights, map_location="cpu")
+    #     msg = dino_model.load_state_dict(state_dict["model"], strict=False)
+    #     print(msg)
 
-    if opt.generate_images:
-        generate_images_per_model(opt, dino_model, device)
-    else:
+    # if opt.generate_images:
+    #     generate_images_per_model(opt, dino_model, device)
+    # else:
+    #     model_accuracy = run_eval(opt, test_data_loader, dino_model, device)
+    #     print(f"Jaccard index for {opt.model_name}: {model_accuracy}")
+        opt = parse_args()
+        test_dataset, test_data_loader = get_voc_dataset()
+        dino_model, mean, std = get_model(opt) # TODO: get MVP
+        device = 'cuda'
         model_accuracy = run_eval(opt, test_data_loader, dino_model, device)
         print(f"Jaccard index for {opt.model_name}: {model_accuracy}")
