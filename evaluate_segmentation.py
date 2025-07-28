@@ -16,24 +16,27 @@ from utils import get_voc_dataset, get_model, parse_args
 
 def get_attention_masks(args, image, model, device):
     # make the image divisible by the patch size
-    w, h = image.shape[2] - image.shape[2] % args.patch_size, image.shape[3] - image.shape[3] % args.patch_size
+    w, h = image.shape[2] - image.shape[2] % args.patch_size, image.shape[3] - \
+        image.shape[3] % args.patch_size
     image = image[:, :w, :h]
     w_featmap = image.shape[-2] // args.patch_size
     h_featmap = image.shape[-1] // args.patch_size
 
     # import pdb; pdb.set_trace()
-    try:
-        attentions = model.forward_selfattention(image.to(device))
-    except:
-        attentions = model.forward_attention(image.to(device), layer=11)
+
+    outputs = model(image.to(device), output_attentions=True)
+    attentions = outputs.attentions[-1]  # or specific layer
+
     nh = attentions.shape[1]
 
     # we keep only the output patch attention
     if False:
         if args.use_shape:
-            attentions = attentions[0, :, 1, 2:].reshape(nh, -1)  # use distillation token attention
+            attentions = attentions[0, :, 1, 2:].reshape(
+                nh, -1)  # use distillation token attention
         else:
-            attentions = attentions[0, :, 0, 2:].reshape(nh, -1)  # use class token attention
+            attentions = attentions[0, :, 0, 2:].reshape(
+                nh, -1)  # use class token attention
     else:
         attentions = attentions[0, :, 0, 1:].reshape(nh, -1)
 
@@ -52,7 +55,8 @@ def get_attention_masks(args, image, model, device):
 
     th_attn = th_attn.reshape(nh, w_featmap, h_featmap).float()
     # interpolate
-    th_attn = interpolate(th_attn.unsqueeze(0), scale_factor=args.patch_size, mode="nearest")[0]
+    th_attn = interpolate(th_attn.unsqueeze(
+        0), scale_factor=args.patch_size, mode="nearest")[0]
 
     return th_attn
 
@@ -64,8 +68,10 @@ def get_per_sample_jaccard(pred, target):
         if mask_idx in [0, 255]:  # ignore index
             continue
         cur_mask = target == mask_idx
-        intersection = (cur_mask * pred) * (cur_mask != 255)  # handle void labels
-        intersection = torch.sum(intersection, dim=[1, 2])  # handle void labels
+        intersection = (cur_mask * pred) * \
+            (cur_mask != 255)  # handle void labels
+        intersection = torch.sum(
+            intersection, dim=[1, 2])  # handle void labels
         union = ((cur_mask + pred) > 0) * (cur_mask != 255)
         union = torch.sum(union, dim=[1, 2])
         jac_all = intersection / union
@@ -79,7 +85,8 @@ def run_eval(args, data_loader, model, device):
     model.eval()
     total_jac = 0
     image_count = 0
-    import pdb; pdb.set_trace()
+    import pdb
+    pdb.set_trace()
     for idx, (sample, target) in tqdm(enumerate(data_loader), total=len(data_loader)):
         sample, target = sample.to(device), target.to(device)
         attention_mask = get_attention_masks(args, sample, model, device)
@@ -91,7 +98,8 @@ def run_eval(args, data_loader, model, device):
 
 def apply_mask_last(image, mask, color=(0.0, 0.0, 1.0), alpha=0.5):
     for c in range(3):
-        image[:, :, c] = image[:, :, c] * (1 - alpha * mask) + alpha * mask * color[c] * 255
+        image[:, :, c] = image[:, :, c] * \
+            (1 - alpha * mask) + alpha * mask * color[c] * 255
     return image
 
 
@@ -170,10 +178,12 @@ def generate_images_per_model(args, model, device):
 
     attention_masks = []
     for sample in samples:
-        attention_masks.append(get_attention_masks(args, sample.unsqueeze(0), model, device))
+        attention_masks.append(get_attention_masks(
+            args, sample.unsqueeze(0), model, device))
 
     os.makedirs(f"{args.save_path}", exist_ok=True)
-    os.makedirs(f"{args.save_path}/{args.model_name}_{args.threshold}", exist_ok=True)
+    os.makedirs(
+        f"{args.save_path}/{args.model_name}_{args.threshold}", exist_ok=True)
     for idx, (sample, mask) in enumerate(zip(samples, attention_masks)):
         for head_idx, mask_h in enumerate(mask):
             f_name = f"{args.save_path}/{args.model_name}_{args.threshold}/im_{idx:03d}_{head_idx}.png"
@@ -181,33 +191,9 @@ def generate_images_per_model(args, model, device):
 
 
 if __name__ == '__main__':
-    # opt = parse_args()
-    # device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    # test_dataset, test_data_loader = get_voc_dataset()
-
-    # opt.is_dist = "dist" in opt.model_name
-    # if opt.use_shape:
-    #     assert opt.is_dist, "shape token only present in distilled models"
-
-    # if opt.rand_init:
-    #     dino_model, mean, std = get_model(opt, pretrained=False)
-    # else:
-    #     dino_model, mean, std = get_model(opt)
-    #     if opt.pretrained_weights.startswith("https://"):
-    #         state_dict = torch.hub.load_state_dict_from_url(url=opt.pretrained_weights, map_location="cpu")
-    #     else:
-    #         state_dict = torch.load(opt.pretrained_weights, map_location="cpu")
-    #     msg = dino_model.load_state_dict(state_dict["model"], strict=False)
-    #     print(msg)
-
-    # if opt.generate_images:
-    #     generate_images_per_model(opt, dino_model, device)
-    # else:
-    #     model_accuracy = run_eval(opt, test_data_loader, dino_model, device)
-    #     print(f"Jaccard index for {opt.model_name}: {model_accuracy}")
-        opt = parse_args()
-        test_dataset, test_data_loader = get_voc_dataset()
-        dino_model, mean, std = get_model(opt) # TODO: get MVP
-        device = 'cuda'
-        model_accuracy = run_eval(opt, test_data_loader, dino_model, device)
-        print(f"Jaccard index for {opt.model_name}: {model_accuracy}")
+    opt = parse_args()
+    test_dataset, test_data_loader = get_voc_dataset()
+    dino_model, mean, std = get_model(opt)  # TODO: get MVP
+    device = 'cuda'
+    model_accuracy = run_eval(opt, test_data_loader, dino_model, device)
+    print(f"Jaccard index for {opt.model_name}: {model_accuracy}")

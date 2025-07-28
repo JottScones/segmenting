@@ -13,21 +13,27 @@ import torch.nn as nn
 from torchvision import transforms
 from torchvision.transforms import transforms
 from tqdm import tqdm
+from transformers import AutoModel
 
 import vit_models
+
 
 class ClipEnc(nn.Module):
     def __init__(self, m):
         super().__init__()
         self.m = m
+
     def forward(self, im):
         e = self.m.encode_image(im)
         return e
+
     def forward_selfattention(self, x):
         x = self.m.visual.conv1(x)  # shape = [*, width, grid, grid]
-        x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
+        # shape = [*, width, grid ** 2]
+        x = x.reshape(x.shape[0], x.shape[1], -1)
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
-        x = torch.cat([self.m.visual.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), x], dim=1)  # shape = [*, grid ** 2 + 1, width]
+        x = torch.cat([self.m.visual.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1,
+                      x.shape[-1], dtype=x.dtype, device=x.device), x], dim=1)  # shape = [*, grid ** 2 + 1, width]
         x = x + self.m.visual.positional_embedding.to(x.dtype)
         x = self.m.visual.ln_pre(x)
 
@@ -35,8 +41,10 @@ class ClipEnc(nn.Module):
         for i, blk in enumerate(self.m.visual.transformer.resblocks):
             if i == self.m.visual.transformer.layers - 1:
                 x = blk.ln_1(x)
-                blk.attn_mask = blk.attn_mask.to(dtype=x.dtype, device=x.device) if blk.attn_mask is not None else None
-                x = blk.attn(x, x, x, need_weights=True, attn_mask=blk.attn_mask, average_attn_weights=False)[1]
+                blk.attn_mask = blk.attn_mask.to(
+                    dtype=x.dtype, device=x.device) if blk.attn_mask is not None else None
+                x = blk.attn(x, x, x, need_weights=True,
+                             attn_mask=blk.attn_mask, average_attn_weights=False)[1]
                 # return x[:, 0, 1:]
                 return x
                 # blk.attn_mask = blk.attn_mask.to(dtype=x.dtype, device=x.device) if blk.attn_mask is not None else None
@@ -45,7 +53,6 @@ class ClipEnc(nn.Module):
                 # return blk.attention(blk.ln_1(x))[0]
 
             x = blk(x)
-    
 
 
 def get_voc_dataset(voc_root=None):
@@ -69,7 +76,8 @@ def get_voc_dataset(voc_root=None):
 
     dataset = torchvision.datasets.VOCSegmentation(root=voc_root, image_set="val", transform=data_transform,
                                                    target_transform=target_transform, download=True)
-    data_loader = torch.utils.data.DataLoader(dataset, batch_size=1, drop_last=False)
+    data_loader = torch.utils.data.DataLoader(
+        dataset, batch_size=1, drop_last=False)
 
     return dataset, data_loader
 
@@ -78,115 +86,22 @@ def get_model(args, pretrained=True):
     model_names = sorted(name for name in models.__dict__
                          if name.islower() and not name.startswith("__")
                          and callable(models.__dict__[name]))
-    timm_model_names = timm.list_models(pretrained=True)
 
-    if args.model_name in model_names:
-        model = models.__dict__[args.model_name](pretrained=pretrained)
+    if 'dino_small_v2' in args.model_name:
+        print("Using DINO model")
+        model = AutoModel.from_pretrained(
+            args.pretrained_weights, from_flax=True)
         mean = (0.485, 0.456, 0.406)
         std = (0.229, 0.224, 0.225)
-    elif 'resnet_drop' in args.model_name:
-        model = vit_models.drop_resnet50(pretrained=True)
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif 'deit' in args.model_name:
-        model = create_model(args.model_name, pretrained=pretrained)
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif 'dino_small_dist' in args.model_name:
-        model = vit_models.dino_small_dist(patch_size=vars(args).get("patch_size", 16), pretrained=pretrained)
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif 'dino_tiny_dist' in args.model_name:
-        model = vit_models.dino_tiny_dist(patch_size=vars(args).get("patch_size", 16), pretrained=pretrained)
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif 'dino_small' in args.model_name:
-        model = vit_models.dino_small(patch_size=vars(args).get("patch_size", 16), pretrained=pretrained)
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif 'dino_small_v2' in args.model_name:
-        model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif 'dino_tiny' in args.model_name:
-        model = vit_models.dino_tiny(patch_size=vars(args).get("patch_size", 16), pretrained=pretrained)
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif 'clip_vitb16' in args.model_name:
-        import clip
-        model, _ = clip.load('ViT-B/32', device='cpu', jit=False)
-        model = ClipEnc(model)
+    elif 'clip_vit' in args.model_name:
+        print("Using CLIP model")
+        model = AutoModel.from_pretrained(
+            args.pretrained_weights, from_flax=True)
         mean = (0.48145466, 0.4578275, 0.40821073)
         std = (0.26862954, 0.26130258, 0.27577711)
-    # elif 'vit' in args.model_name and not 'T2t' in args.model_name:
-    #     model = create_model(args.model_name, pretrained=pretrained)
-    #     mean = (0.5, 0.5, 0.5)
-    #     std = (0.5, 0.5, 0.5)
-    elif 'T2t' in args.model_name:
-        model = create_model(args.model_name, pretrained=pretrained)
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif 'tnt' in args.model_name:
-        model = create_model(args.model_name, pretrained=pretrained)
-        mean = (0.5, 0.5, 0.5)
-        std = (0.5, 0.5, 0.5)
-    elif 'mvp' == args.model_name:
-        import mvp
-        model = mvp.load("vitb-mae-egosoup")
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif 'mvp_mae_hoi' == args.model_name:
-        import mvp
-        model = mvp.load("vits-mae-hoi")
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif 'mocov3_vitb' == args.model_name:
-        from torch.utils import model_zoo
-        import torch.nn as nn
-        import vits
-        model = vits.vit_base()
-        checkpoint = model_zoo.load_url("https://dl.fbaipublicfiles.com/moco-v3/vit-b-300ep/vit-b-300ep.pth.tar")
-        state_dict = checkpoint["state_dict"]
-        for k in list(state_dict.keys()):
-            if k.startswith('module.base_encoder') and not k.startswith('module.base_encoder.head'):
-                # remove prefix
-                state_dict[k[len("module.base_encoder."):]] = state_dict[k]
-            # delete renamed or unused k
-            del state_dict[k]
-        model.load_state_dict(state_dict, strict=False)
-        model.head = nn.Identity()
-        model = model.eval()
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif 'mocov3' in args.model_name:
-        from torch.utils import model_zoo
-        import torch.nn as nn
-        import vits
-        model = vits.vit_small()
-        checkpoint = model_zoo.load_url("https://dl.fbaipublicfiles.com/moco-v3/vit-s-300ep/vit-s-300ep.pth.tar")
-        state_dict = checkpoint["state_dict"]
-        for k in list(state_dict.keys()):
-            if k.startswith('module.base_encoder') and not k.startswith('module.base_encoder.head'):
-                # remove prefix
-                state_dict[k[len("module.base_encoder."):]] = state_dict[k]
-            # delete renamed or unused k
-            del state_dict[k]
-        model.load_state_dict(state_dict, strict=False)
-        model.head = nn.Identity()
-        model = model.eval()
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif args.model_name == 'vit_mae_in':
-        import mvp
-        model = mvp.load("vits-mae-in")
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-    elif args.model_name in timm_model_names:
-        model = create_model(args.model_name, pretrained=pretrained)
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
     else:
-        raise NotImplementedError(f'Please provide correct model names: {model_names}')
+        raise NotImplementedError(
+            f'Please provide correct model names: {model_names}')
 
     return model, mean, std
 
@@ -195,42 +110,72 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Transformers')
     parser.add_argument('--test_dir', default='/home/kanchanaranasinghe/data/raw/imagenet/val',
                         help='ImageNet Validation Data')
-    parser.add_argument('--exp_name', default=None, help='pretrained weight path')
-    parser.add_argument('--model_name', type=str, default='deit_small_patch16_224', help='Model Name')
+    parser.add_argument('--exp_name', default=None,
+                        help='pretrained weight path')
+    parser.add_argument('--model_name', type=str,
+                        default='deit_small_patch16_224', help='Model Name')
     parser.add_argument('--scale_size', type=int, default=256, help='')
     parser.add_argument('--img_size', type=int, default=224, help='')
-    parser.add_argument('--batch_size', type=int, default=256, help='Batch Size')
-    parser.add_argument('--drop_count', type=int, default=180, help='How many patches to drop')
-    parser.add_argument('--drop_best', action='store_true', default=False, help="set True to drop the best matching")
-    parser.add_argument('--test_image', action='store_true', default=False, help="set True to output test images")
-    parser.add_argument('--shuffle', action='store_true', default=False, help="shuffle instead of dropping")
-    parser.add_argument('--shuffle_size', type=int, default=14, help='nxn grid size of n', nargs='*')
-    parser.add_argument('--shuffle_h', type=int, default=None, help='h of hxw grid', nargs='*')
-    parser.add_argument('--shuffle_w', type=int, default=None, help='w of hxw grid', nargs='*')
-    parser.add_argument('--random_drop', action='store_true', default=False, help="randomly drop patches")
-    parser.add_argument('--random_offset_drop', action='store_true', default=False, help="randomly drop patches")
-    parser.add_argument('--cascade', action='store_true', default=False, help="run cascade evaluation")
-    parser.add_argument('--exp_count', type=int, default=1, help='random experiment count to average over')
-    parser.add_argument('--saliency', action='store_true', default=False, help="drop using saliency")
-    parser.add_argument('--saliency_box', action='store_true', default=False, help="drop using saliency")
-    parser.add_argument('--drop_lambda', type=float, default=0.2, help='percentage of image to drop for box')
-    parser.add_argument('--standard_box', action='store_true', default=False, help="drop using standard model")
-    parser.add_argument('--dino', action='store_true', default=False, help="drop using dino model saliency")
+    parser.add_argument('--batch_size', type=int,
+                        default=256, help='Batch Size')
+    parser.add_argument('--drop_count', type=int, default=180,
+                        help='How many patches to drop')
+    parser.add_argument('--drop_best', action='store_true',
+                        default=False, help="set True to drop the best matching")
+    parser.add_argument('--test_image', action='store_true',
+                        default=False, help="set True to output test images")
+    parser.add_argument('--shuffle', action='store_true',
+                        default=False, help="shuffle instead of dropping")
+    parser.add_argument('--shuffle_size', type=int, default=14,
+                        help='nxn grid size of n', nargs='*')
+    parser.add_argument('--shuffle_h', type=int, default=None,
+                        help='h of hxw grid', nargs='*')
+    parser.add_argument('--shuffle_w', type=int, default=None,
+                        help='w of hxw grid', nargs='*')
+    parser.add_argument('--random_drop', action='store_true',
+                        default=False, help="randomly drop patches")
+    parser.add_argument('--random_offset_drop', action='store_true',
+                        default=False, help="randomly drop patches")
+    parser.add_argument('--cascade', action='store_true',
+                        default=False, help="run cascade evaluation")
+    parser.add_argument('--exp_count', type=int, default=1,
+                        help='random experiment count to average over')
+    parser.add_argument('--saliency', action='store_true',
+                        default=False, help="drop using saliency")
+    parser.add_argument('--saliency_box', action='store_true',
+                        default=False, help="drop using saliency")
+    parser.add_argument('--drop_lambda', type=float, default=0.2,
+                        help='percentage of image to drop for box')
+    parser.add_argument('--standard_box', action='store_true',
+                        default=False, help="drop using standard model")
+    parser.add_argument('--dino', action='store_true',
+                        default=False, help="drop using dino model saliency")
 
-    parser.add_argument('--lesion', action='store_true', default=False, help="drop using dino model saliency")
-    parser.add_argument('--block_index', type=int, default=0, help='block index for lesion method', nargs='*')
+    parser.add_argument('--lesion', action='store_true',
+                        default=False, help="drop using dino model saliency")
+    parser.add_argument('--block_index', type=int, default=0,
+                        help='block index for lesion method', nargs='*')
 
-    parser.add_argument('--draw_plots', action='store_true', default=False, help="draw plots")
-    parser.add_argument('--select_im', action='store_true', default=False, help="select robust images")
-    parser.add_argument('--save_path', type=str, default=None, help='save path')
+    parser.add_argument('--draw_plots', action='store_true',
+                        default=False, help="draw plots")
+    parser.add_argument('--select_im', action='store_true',
+                        default=False, help="select robust images")
+    parser.add_argument('--save_path', type=str,
+                        default=None, help='save path')
 
     # segmentation evaluation arguments
-    parser.add_argument('--threshold', type=float, default=0.9, help='threshold for segmentation')
-    parser.add_argument('--pretrained_weights', default=None, help='pretrained weights path')
-    parser.add_argument('--patch_size', type=int, default=16, help='nxn grid size of n')
-    parser.add_argument('--use_shape', action='store_true', default=False, help="use shape token for prediction")
-    parser.add_argument('--rand_init', action='store_true', default=False, help="use randomly initialized model")
-    parser.add_argument('--generate_images', action='store_true', default=False, help="generate images instead of eval")
+    parser.add_argument('--threshold', type=float,
+                        default=0.9, help='threshold for segmentation')
+    parser.add_argument('--pretrained_weights', default=None,
+                        help='pretrained weights path')
+    parser.add_argument('--patch_size', type=int,
+                        default=16, help='nxn grid size of n')
+    parser.add_argument('--use_shape', action='store_true',
+                        default=False, help="use shape token for prediction")
+    parser.add_argument('--rand_init', action='store_true',
+                        default=False, help="use randomly initialized model")
+    parser.add_argument('--generate_images', action='store_true',
+                        default=False, help="generate images instead of eval")
 
     return parser.parse_args()
 
@@ -350,17 +295,21 @@ def parse_train_arguments():
 
     # model architecture arguments
     parser.add_argument('--model', type=str, default='deit')
-    parser.add_argument('--use_top_n_heads', type=int, default=1, help="use class token from intermediate layers")
-    parser.add_argument('--use_patch_outputs', action='store_true', default=False, help='use patch tokens')
+    parser.add_argument('--use_top_n_heads', type=int, default=1,
+                        help="use class token from intermediate layers")
+    parser.add_argument('--use_patch_outputs', action='store_true',
+                        default=False, help='use patch tokens')
 
     # default evaluation arguments
     parser.add_argument('--datasets', type=str, default=None, metavar='DATASETS', nargs='+',
                         help="Datasets for evaluation")
-    parser.add_argument('--classifier', type=str, default='LR', choices=['LR', 'NN'])
+    parser.add_argument('--classifier', type=str,
+                        default='LR', choices=['LR', 'NN'])
     parser.add_argument('--runs', type=int, default=600)
     parser.add_argument('--num-support', type=int, default=1)
     parser.add_argument('--save', type=str, default='logs')
-    parser.add_argument('--norm', action='store_true', default=False, help='use normalized features')
+    parser.add_argument('--norm', action='store_true',
+                        default=False, help='use normalized features')
 
     # episodic dataset params
     parser.add_argument('--n_test_runs', type=int, default=600, metavar='N',
@@ -383,14 +332,18 @@ def parse_train_arguments():
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--project', type=str, default='vit_fsl')
     parser.add_argument('--exp', type=str, default='exp_001')
-    parser.add_argument('--load', type=str, default=None, help="path to model to load")
+    parser.add_argument('--load', type=str, default=None,
+                        help="path to model to load")
     parser.add_argument('--image_size', type=int, default=84)
 
     parser.add_argument('--model-ema', action='store_true')
-    parser.add_argument('--no-model-ema', action='store_false', dest='model_ema')
+    parser.add_argument(
+        '--no-model-ema', action='store_false', dest='model_ema')
     parser.set_defaults(model_ema=True)
-    parser.add_argument('--model-ema-decay', type=float, default=0.99996, help='')
-    parser.add_argument('--model-ema-force-cpu', action='store_true', default=False, help='')
+    parser.add_argument('--model-ema-decay', type=float,
+                        default=0.99996, help='')
+    parser.add_argument('--model-ema-force-cpu',
+                        action='store_true', default=False, help='')
 
     # arguments for data augmentation
     parser.add_argument('--color-jitter', type=float, default=0.4, metavar='PCT',
@@ -398,7 +351,8 @@ def parse_train_arguments():
     parser.add_argument('--aa', type=str, default='rand-m9-mstd0.5-inc1', metavar='NAME',
                         help='Use AutoAugment policy. "v0" or "original". " + \
                              "(default: rand-m9-mstd0.5-inc1)'),
-    parser.add_argument('--smoothing', type=float, default=0.1, help='Label smoothing (default: 0.1)')
+    parser.add_argument('--smoothing', type=float, default=0.1,
+                        help='Label smoothing (default: 0.1)')
     parser.add_argument('--train-interpolation', type=str, default='bicubic',
                         help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
     # Random Erase params
@@ -464,7 +418,8 @@ def parse_train_arguments():
                         help='LR decay rate (default: 0.1)')
 
     parser.add_argument('--repeated-aug', action='store_true')
-    parser.add_argument('--no-repeated-aug', action='store_false', dest='repeated_aug')
+    parser.add_argument('--no-repeated-aug',
+                        action='store_false', dest='repeated_aug')
 
     return parser.parse_args()
 
