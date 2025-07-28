@@ -276,6 +276,7 @@ def generate_average_attention_heatmap(args, model, device, layer_idx=-1):
     model.eval()
 
     samples = []
+    im_names = []
     for im_name in tqdm(os.listdir(args.test_dir)):
         im_path = f"{args.test_dir}/{im_name}"
         target_size = 512 - (512 % args.patch_size)
@@ -286,6 +287,7 @@ def generate_average_attention_heatmap(args, model, device, layer_idx=-1):
 
         img = torchvision.transforms.functional.to_tensor(img)
         samples.append(img)
+        im_names.append(im_name.split('.')[0])
 
     samples = torch.stack(samples, 0).to(device)
 
@@ -293,14 +295,14 @@ def generate_average_attention_heatmap(args, model, device, layer_idx=-1):
     os.makedirs(
         f"{args.save_path}/{args.model_name}_{args.pretrained_weights}_avg_attention_layer{layer_idx}", exist_ok=True)
 
-    for idx, sample in enumerate(samples):
+    for sample, fn in zip(samples, im_names):
         heatmaps, processed_img = get_attention_heatmaps(
             args, sample.unsqueeze(0), model, device, layer_idx)
 
         # Average across all heads
         avg_attention = torch.mean(heatmaps, dim=0)
 
-        f_name = f"{args.save_path}/{args.model_name}_{args.pretrained_weights}_avg_attention_layer{layer_idx}/im_{idx:03d}_avg.png"
+        f_name = f"{args.save_path}/{args.model_name}_{args.pretrained_weights}_avg_attention_layer{layer_idx}/{fn}_avg.png"
         display_attention_heatmap(
             processed_img.squeeze(0), avg_attention, fname=f_name)
 
