@@ -130,7 +130,7 @@ def display_attention_heatmap(image, attention, fname="test", figsize=(10, 5), c
 
     # Convert image to numpy
     img_np = image.permute(1, 2, 0).cpu().numpy()
-    att_np = attention.cpu().numpy()
+    att_np = attention.detach().cpu().numpy()
 
     # Original image
     axes[0].imshow(img_np)
@@ -300,7 +300,7 @@ def generate_average_attention_heatmap(args, model, device, layer_idx=-1):
         # Average across all heads
         avg_attention = torch.mean(heatmaps, dim=0)
 
-        f_name = f"{args.save_path}/{args.model_name}_avg_attention_layer{layer_idx}/im_{idx:03d}_avg.png"
+        f_name = f"{args.save_path}/{args.model_name}_{args.pretrained_weights}_avg_attention_layer{layer_idx}/im_{idx:03d}_avg.png"
         display_attention_heatmap(
             processed_img.squeeze(0), avg_attention, fname=f_name)
 
