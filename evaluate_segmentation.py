@@ -291,7 +291,7 @@ def generate_average_attention_heatmap(args, model, device, layer_idx=-1):
 
     os.makedirs(f"{args.save_path}", exist_ok=True)
     os.makedirs(
-        f"{args.save_path}/{args.model_name}_avg_attention_layer{layer_idx}", exist_ok=True)
+        f"{args.save_path}/{args.model_name}__{args.pretrained_weights}_avg_attention_layer{layer_idx}", exist_ok=True)
 
     for idx, sample in enumerate(samples):
         heatmaps, processed_img = get_attention_heatmaps(
