@@ -75,7 +75,7 @@ def get_voc_dataset(voc_root=None):
     ])
 
     dataset = torchvision.datasets.VOCSegmentation(root=voc_root, image_set="val", transform=data_transform,
-                                                   target_transform=target_transform, download=True)
+                                                   target_transform=target_transform)
     data_loader = torch.utils.data.DataLoader(
         dataset, batch_size=1, drop_last=False)
 
