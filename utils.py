@@ -108,7 +108,7 @@ def get_model(args, pretrained=True):
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Transformers')
-    parser.add_argument('--test_dir', default='/home/kanchanaranasinghe/data/raw/imagenet/val',
+    parser.add_argument('--test_dir', default='',
                         help='ImageNet Validation Data')
     parser.add_argument('--exp_name', default=None,
                         help='pretrained weight path')

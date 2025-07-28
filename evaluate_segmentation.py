@@ -191,9 +191,31 @@ def generate_images_per_model(args, model, device):
 
 
 if __name__ == '__main__':
+    # opt = parse_args()
+    # device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    # test_dataset, test_data_loader = get_voc_dataset()
+
+    # opt.is_dist = "dist" in opt.model_name
+    # if opt.use_shape:
+    #     assert opt.is_dist, "shape token only present in distilled models"
+
+    # if opt.rand_init:
+    #     dino_model, mean, std = get_model(opt, pretrained=False)
+    # else:
+    #     dino_model, mean, std = get_model(opt)
+    #     if opt.pretrained_weights.startswith("https://"):
+    #         state_dict = torch.hub.load_state_dict_from_url(url=opt.pretrained_weights, map_location="cpu")
+    #     else:
+    #         state_dict = torch.load(opt.pretrained_weights, map_location="cpu")
+    #     msg = dino_model.load_state_dict(state_dict["model"], strict=False)
+    #     print(msg)
+
     opt = parse_args()
-    test_dataset, test_data_loader = get_voc_dataset()
     dino_model, mean, std = get_model(opt)  # TODO: get MVP
     device = 'cuda'
-    model_accuracy = run_eval(opt, test_data_loader, dino_model, device)
-    print(f"Jaccard index for {opt.model_name}: {model_accuracy}")
+    if opt.generate_images:
+        generate_images_per_model(opt, dino_model, device)
+    else:
+        test_dataset, test_data_loader = get_voc_dataset()
+        model_accuracy = run_eval(opt, test_data_loader, dino_model, device)
+        print(f"Jaccard index for {opt.model_name}: {model_accuracy}")
