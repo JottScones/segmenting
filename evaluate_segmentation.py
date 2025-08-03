@@ -288,7 +288,10 @@ def generate_average_attention_heatmap(args, model, device, layer_idx=-1):
     im_names = []
     for im_name in tqdm(os.listdir(args.test_dir)):
         im_path = f"{args.test_dir}/{im_name}"
-        target_size = 512 - (512 % args.patch_size)
+        if "clip" in args.model_name.lower():
+            target_size = 224
+        else:
+            target_size = 512 - (512 % args.patch_size)
         img = Image.open(f"{im_path}").resize((target_size, target_size))
 
         if img.mode != 'RGB':
@@ -302,7 +305,7 @@ def generate_average_attention_heatmap(args, model, device, layer_idx=-1):
 
     os.makedirs(f"{args.save_path}", exist_ok=True)
     os.makedirs(
-        f"{args.save_path}/{args.model_name}_{args.pretrained_weights}_avg_attention_layer{layer_idx}", exist_ok=True)
+        f"{args.save_path}/{args.pretrained_weights}", exist_ok=True)
 
     for sample, fn in zip(samples, im_names):
         heatmaps, processed_img = get_attention_heatmaps(
@@ -311,7 +314,7 @@ def generate_average_attention_heatmap(args, model, device, layer_idx=-1):
         # Average across all heads
         avg_attention = torch.mean(heatmaps, dim=0)
 
-        f_name = f"{args.save_path}/{args.model_name}_{args.pretrained_weights}_avg_attention_layer{layer_idx}/{fn}_avg.png"
+        f_name = f"{args.save_path}/{args.pretrained_weights}/{args.pretrained_weights}_{fn}_avg.png"
         display_attention_heatmap(
             processed_img.squeeze(0), avg_attention, fname=f_name)
 
