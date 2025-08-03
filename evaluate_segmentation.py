@@ -62,28 +62,37 @@ def get_attention_heatmaps(args, image, model, device, layer_idx=-1):
     attentions = outputs.attentions[layer_idx]  # use specified layer
 
     nh = attentions.shape[1]
+    Np = (attentions.shape[-1] - 1)  # number of patches
 
-    # Get raw attention values from CLS token to all patches
-    raw_attentions = attentions[0, :, 0, 1:].reshape(nh, -1)
+    if 'clip' in args.model_name.lower():
+        # existing CLS-based slice
+        raw_attentions = attentions[0, :, 0, 1:]        # [heads, Np]
 
-    # Normalize each head to [0, 1] for better visualization
-    normalized_attentions = torch.zeros_like(raw_attentions)
-    for head in range(nh):
-        att_head = raw_attentions[head]
-        # Min-max normalization
-        att_min, att_max = att_head.min(), att_head.max()
-        if att_max > att_min:  # Avoid division by zero
-            normalized_attentions[head] = (
-                att_head - att_min) / (att_max - att_min)
-        else:
-            normalized_attentions[head] = att_head
+    elif 'dino' in args.model_name.lower():
+        # patch→patch: ignore CLS row/col, average over queries+heads
+        patch2patch = attentions[0, :, 1:, 1:]    # [heads, Np, Np]
+        avg_over_heads = patch2patch.mean(dim=0)    # [Np, Np]
+        avg_incoming = avg_over_heads.mean(dim=0)  # [Np]
+        raw_attentions = avg_incoming.unsqueeze(
+            0).repeat(nh, 1)  # mimic [heads, Np]
 
-    # Reshape to spatial dimensions
-    heatmaps = normalized_attentions.reshape(nh, w_featmap, h_featmap).float()
+    normalized = torch.zeros_like(raw_attentions)
+    for h in range(nh):
+        v = raw_attentions[h]
+        mn, mx = v.min(), v.max()
+        normalized[h] = (v - mn) / (mx - mn) if mx > mn else v
 
-    # Upsample to original image size using bilinear for smoother heatmaps
-    heatmaps = interpolate(heatmaps.unsqueeze(
-        0), scale_factor=args.patch_size, mode="bilinear", align_corners=False)[0]
+    # reshape back to grid
+    w_featmap = image.shape[-2] // args.patch_size
+    h_featmap = image.shape[-1] // args.patch_size
+    heatmaps = normalized.reshape(nh, w_featmap, h_featmap)
+
+    # upsample
+    heatmaps = interpolate(
+        heatmaps.unsqueeze(0),
+        scale_factor=args.patch_size,
+        mode="bilinear", align_corners=False
+    )[0]
 
     return heatmaps, image
 
